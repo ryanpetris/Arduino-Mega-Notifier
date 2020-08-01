@@ -1,13 +1,18 @@
 #include <SPI.h>
 #include <Ethernet.h>
 
-byte mac_address[] = { 0x00, 0x00, 0x00, 0x00, 0x00, 0x00 };
+const byte mac_address[] = { 0x00, 0x00, 0x00, 0x00, 0x00, 0x00 };
+const char iot_host[] = "";
+const int iot_port = 8000;
+
 const int pin_min = 22;
 const int pin_max = 49;
 const int pin_count = pin_max - pin_min + 1;
 int pin_states[pin_count];
 int silent_loops = 0;
 const int max_silent_loops = 100;
+int state_send_failures = 0;
+const int max_state_send_failures = 20;
 
 void setup() {
   Serial.begin(115200);
@@ -32,6 +37,8 @@ void setup_ethernet() {
   Serial.print(" and subnet mask ");
   Serial.print(Ethernet.subnetMask());
   Serial.println(".");
+
+  state_send_failures = 0;
 }
 
 void setPinState(int pin, int state) {
@@ -47,39 +54,65 @@ int getPinState(int pin) {
 }
 
 void send_pin_states() {
-  silent_loops = 0;
+  EthernetClient client;
+
+  if (!client.connect(iot_host, iot_port)) {
+    Serial.print("Could not connect to ");
+    Serial.print(iot_host);
+    Serial.print(":");
+    Serial.print(iot_port, DEC);
+    Serial.println(" to send state information.");
+
+    state_send_failures++;
+
+    if (state_send_failures > max_state_send_failures) {
+      setup_ethernet();
+    }
+
+    return;
+  }
   
   char data[100];
   
-  Serial.println("{");
+  client.println("{");
   
   sprintf(data, "    \"device\": \"%02x:%02x:%02x:%02x:%02x:%02x\",", mac_address[0], mac_address[1], mac_address[2], mac_address[3], mac_address[4], mac_address[5]);
-  Serial.println(data);
+  client.println(data);
 
-  Serial.println("    \"pins\": {");
+  client.println("    \"pins\": {");
   
   for (int i = pin_min; i <= pin_max; i++) {
     int state = getPinState(i);
 
-    Serial.print("        \"");
-    Serial.print(i, DEC);
-    Serial.print("\": ");
+    client.print("        \"");
+    client.print(i, DEC);
+    client.print("\": ");
 
     if (state > 0) {
-      Serial.print("false");
+      client.print("false");
     } else {
-      Serial.print("true");
+      client.print("true");
     }
 
     if (i < pin_max) {
-      Serial.print(",");
+      client.print(",");
     }
 
-    Serial.println("");
+    client.println("");
   }
 
-  Serial.println("    }");
-  Serial.println("}");
+  client.println("    }");
+  client.println("}");
+
+  client.stop();
+
+  Serial.print("Sent state information to ");
+  Serial.print(iot_host);
+  Serial.print(":");
+  Serial.print(iot_port, DEC);
+  Serial.println(".");
+
+  silent_loops = 0;
 }
 
 void loop() {
